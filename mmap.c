@@ -13,7 +13,6 @@
 #endif
 
 #include <ruby/io.h>
-#include <ruby/intern.h>
 #include <ruby/re.h>
 
 #ifndef MADV_NORMAL
@@ -321,11 +320,13 @@ mm_str(VALUE obj, int modify)
     if (rb_obj_tainted(obj)) {
 	OBJ_TAINT(ret);
     }
+    FL_SET(ret, RSTRING_NOEMBED);
     RSTRING(ret)->as.heap.ptr = i_mm->t->addr;
     RSTRING(ret)->as.heap.len = i_mm->t->real;
     if (modify & MM_ORIGIN) {
 	RSTRING(ret)->as.heap.aux.shared = ret;
 	FL_SET(ret, ELTS_SHARED);
+        OBJ_FREEZE(ret);
     }
     if (i_mm->t->flag & MM_FROZEN) {
 	ret = rb_obj_freeze(ret);
@@ -1007,7 +1008,7 @@ do {									   \
     }									   \
     else {								   \
 	bp = StringValuePtr(b);						   \
-	bl = RSTRING(b)->as.heap.len;				       	   \
+	bl = RSTRING_LEN(b);   				       	           \
     }									   \
 } while (0);
 
@@ -1179,21 +1180,21 @@ mm_sub_bang_int(mm_bang *bang_st)
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = regs->end[0] - regs->beg[0];
-	if (RSTRING(repl)->as.heap.len > plen) {
-	    mm_realloc(i_mm, RSTRING(str)->as.heap.len + RSTRING(repl)->as.heap.len - plen);
+	if (RSTRING_LEN(repl) > plen) {
+	    mm_realloc(i_mm, RSTRING(str)->as.heap.len + RSTRING_LEN(repl) - plen);
 	    RSTRING(str)->as.heap.ptr = i_mm->t->addr;
 	}
 	ptr = RSTRING(str)->as.heap.ptr + start + regs->beg[0];
-	if (RSTRING(repl)->as.heap.len != plen) {
+	if (RSTRING_LEN(repl) != plen) {
 	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(ptr + RSTRING(repl)->as.heap.len,
+	    memmove(ptr + RSTRING_LEN(repl),
 		    ptr + plen,
 		    RSTRING(str)->as.heap.len - start - regs->beg[0] - plen);
 	}
-	memcpy(ptr, RSTRING(repl)->as.heap.ptr, RSTRING(repl)->as.heap.len);
-	i_mm->t->real += RSTRING(repl)->as.heap.len - plen;
+	memcpy(ptr, RSTRING_PTR(repl), RSTRING_LEN(repl));
+	i_mm->t->real += RSTRING_LEN(repl) - plen;
 	if (tainted) OBJ_TAINT(obj);
 
 	res = obj;
@@ -1281,27 +1282,27 @@ mm_gsub_bang_int(mm_bang *bang_st)
 	}
 	if (OBJ_TAINTED(repl)) tainted = 1;
 	plen = regs->end[0] - regs->beg[0];
-	if ((i_mm->t->real + RSTRING(val)->as.heap.len - plen) > i_mm->t->len) {
-	    mm_realloc(i_mm, RSTRING(str)->as.heap.len + RSTRING(val)->as.heap.len - plen);
+	if ((i_mm->t->real + RSTRING_LEN(val) - plen) > i_mm->t->len) {
+	    mm_realloc(i_mm, RSTRING(str)->as.heap.len + RSTRING_LEN(val) - plen);
 	}
 	ptr = RSTRING_PTR(str) + start + regs->beg[0];
-	if (RSTRING(val)->as.heap.len != plen) {
+	if (RSTRING_LEN(val) != plen) {
 	    if (i_mm->t->flag & MM_FIXED) {
 		rb_raise(rb_eTypeError, "try to change the size of a fixed map");
 	    }
-	    memmove(ptr + RSTRING(val)->as.heap.len,
+	    memmove(ptr + RSTRING_LEN(val),
 		    ptr + plen,
-		    RSTRING(str)->as.heap.len - start - regs->beg[0] - plen);
+		    RSTRING_LEN(str) - start - regs->beg[0] - plen);
 	}
-	memcpy(ptr, RSTRING(val)->as.heap.ptr, RSTRING(val)->as.heap.len);
-	RSTRING(str)->as.heap.len += RSTRING(val)->as.heap.len - plen;
+	memcpy(ptr, RSTRING_PTR(val), RSTRING_LEN(val));
+	RSTRING(str)->as.heap.len += RSTRING_LEN(val) - plen;
 	i_mm->t->real = RSTRING(str)->as.heap.len;
 	if (regs->beg[0] == regs->end[0]) {
 	    offset = start + regs->end[0] + mbclen2(RSTRING(str)->as.heap.ptr[regs->end[0]], pat);
-	    offset += RSTRING(val)->as.heap.len - plen;
+	    offset += RSTRING_LEN(val) - plen;
 	}
 	else {
-	    offset = start + regs->end[0] + RSTRING(val)->as.heap.len - plen;
+	    offset = start + regs->end[0] + RSTRING_LEN(val) - plen;
 	}
 	if (offset > RSTRING(str)->as.heap.len) break;
 	beg = rb_reg_search(pat, str, offset, 0);
@@ -1407,7 +1408,7 @@ mm_aset(VALUE str, VALUE indx, VALUE val)
 
 	  res = mm_index(1, &indx, str);
 	  if (!NIL_P(res)) {
-	      mm_update(i_mm, NUM2LONG(res), RSTRING(indx)->as.heap.len, val);
+	      mm_update(i_mm, NUM2LONG(res), RSTRING_LEN(indx), val);
 	  }
 	  return val;
       }
@@ -1482,7 +1483,7 @@ mm_insert(VALUE str, VALUE idx, VALUE str2)
 
     GetMmap(str, i_mm, MM_MODIFY);
     if (pos == -1) {
-	pos = RSTRING(str)->as.heap.len;
+	pos = RSTRING_LEN(str);
     }
     else if (pos < 0) {
 	pos++;
@@ -1551,7 +1552,7 @@ static VALUE
 mm_append(VALUE str1, VALUE str2)
 {
     str2 = rb_str_to_str(str2);
-    str1 = mm_cat(str1, StringValuePtr(str2), RSTRING(str2)->as.heap.len);
+    str1 = mm_cat(str1, StringValuePtr(str2), RSTRING_LEN(str2));
     return str1;
 }
 
@@ -2452,7 +2453,7 @@ Init_mmap(void)
     rb_define_method(mm_cMap, "count", mm_count, -1);
 
     rb_define_method(mm_cMap, "tr!", mm_tr_bang, 2);
-    rb_define_method(mm_cMap, "tr_s!", mm_tr_s_bang, 2);
+    rb_define_method(mm_cMap, "tr_s!", mm_undefined, -1);
     rb_define_method(mm_cMap, "delete!", mm_delete_bang, -1);
     rb_define_method(mm_cMap, "squeeze!", mm_squeeze_bang, -1);
 
